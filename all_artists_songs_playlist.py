@@ -23,6 +23,13 @@ def parse_args():
         action="store_true",
         help="Print structural API diagnostics and dump raw payload to .debug_playlist.json.",
     )
+    parser.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default="Full Discography Discovery",
+        help="Custom base name for the generated playlist(s).",
+    )
     return parser.parse_args()
 
 def main():
@@ -78,7 +85,7 @@ def main():
         sp,
         user_id=user_id,
         track_uris=all_tracks,
-        base_name="Full Discography Discovery",
+        base_name=args.name,
     )
 
 
