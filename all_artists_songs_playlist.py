@@ -1,5 +1,6 @@
 import argparse
 import config
+from pathlib import Path
 from services.harvester import (
     create_discovery_playlists,
     fetch_source_artists,
@@ -42,9 +43,13 @@ def main():
     total_filtered = 0
     total_dupes = 0
 
+    # Clear old debug log if starting a new run with --debug
+    if args.debug:
+        Path("duplicates_debug.log").unlink(missing_ok=True)
+
     for idx, artist in enumerate(artists, start=1):
         tracks, filtered_cnt, dupe_cnt = scrape_artist_discography(
-            sp, artist["id"]
+            sp, artist["id"], artist_name=artist["name"], debug=args.debug
         )
         all_tracks.extend(tracks)
         total_filtered += filtered_cnt

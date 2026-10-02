@@ -2,6 +2,26 @@ import json
 from pathlib import Path
 
 
+def log_drop_event(
+    log_file: Path,
+    artist_name: str,
+    drop_type: str,
+    track_name: str,
+    album_name: str,
+    conflicted_with: str = "",
+):
+    """Appends dropped track details directly to a log file with instant flushing."""
+    with open(log_file, "a", encoding="utf-8") as f:
+        if drop_type == "DUPLICATE":
+            f.write(
+                f"[DUPLICATE] {artist_name} | '{track_name}' ({album_name}) -> matches '{conflicted_with}'\n"
+            )
+        elif drop_type == "FILTERED":
+            f.write(
+                f"[FILTERED]  {artist_name} | '{track_name}' ({album_name}) -> matched rejection keyword\n"
+            )
+        f.flush()
+
 def inspect_playlist_payload(
     playlist_meta: dict, items_raw: dict, dump_file: str = ".debug_playlist.json"
 ):

@@ -1,8 +1,11 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 import config
 from utils.client import safe_call
-from utils.diagnostics import inspect_playlist_payload
+from utils.diagnostics import inspect_playlist_payload, log_drop_event
 from utils.filters import normalize_title, should_skip
+
+DEBUG_LOG_PATH = Path("duplicates_debug.log")
 
 
 @dataclass
@@ -37,18 +40,19 @@ def fetch_source_artists(
 
 
 def scrape_artist_discography(
-    sp, artist_id: str
+    sp, artist_id: str, artist_name: str = "", debug: bool = False
 ) -> tuple[list[str], int, int]:
     """Pulls an artist's full tracks, isolating deduplication to this artist alone.
 
     Returns: (track_uris, filtered_count, duplicate_count)
     """
     track_uris = []
-    seen_titles = set()
+    # Maps clean_title -> original track name & album for detailed debug reporting
+    seen_titles: dict[str, str] = {}
     filtered_count = 0
     duplicate_count = 0
 
-    # Spotify Development Mode strictly caps limit to 10
+    # Spotify Development Mode caps album queries to limit=10
     album_page = safe_call(
         sp.artist_albums,
         artist_id,
@@ -59,26 +63,46 @@ def scrape_artist_discography(
 
     while album_page:
         for album in album_page.get("items", []):
-            if should_skip(album["name"]):
+            album_name = album.get("name", "Unknown Album")
+
+            if should_skip(album_name):
                 continue
 
-            # Must also pass limit=10 here (Spotipy defaults to 50)
             results = safe_call(sp.album_tracks, album["id"], limit=10)
             while results:
                 for track in results.get("items", []):
-                    name = track["name"]
+                    name = track.get("name", "Unknown Track")
                     duration = track.get("duration_ms")
 
+                    # 1. Filter out live, acoustic, commentary, and skits
                     if should_skip(name, duration):
                         filtered_count += 1
+                        if debug:
+                            log_drop_event(
+                                DEBUG_LOG_PATH,
+                                artist_name=artist_name,
+                                drop_type="FILTERED",
+                                track_name=name,
+                                album_name=album_name,
+                            )
                         continue
 
+                    # 2. Check per-artist title deduplication
                     clean_title = normalize_title(name)
                     if clean_title in seen_titles:
                         duplicate_count += 1
+                        if debug:
+                            log_drop_event(
+                                DEBUG_LOG_PATH,
+                                artist_name=artist_name,
+                                drop_type="DUPLICATE",
+                                track_name=name,
+                                album_name=album_name,
+                                conflicted_with=seen_titles[clean_title],
+                            )
                         continue
 
-                    seen_titles.add(clean_title)
+                    seen_titles[clean_title] = f"{name} ({album_name})"
                     track_uris.append(track["uri"])
 
                 results = (
