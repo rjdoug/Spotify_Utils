@@ -1,94 +1,74 @@
-import os
-from dotenv import load_dotenv
+import argparse
+import config
+from services.harvester import (
+    create_discovery_playlists,
+    fetch_source_artists,
+    scrape_artist_discography,
+)
 from utils.client import get_spotify_client, safe_call
-from utils.filters import normalize_title, should_skip
-
-load_dotenv()
-
-SOURCE_PLAYLIST_ID = os.getenv("SOURCE_PLAYLIST_ID")
-MARKET = os.getenv("SPOTIFY_MARKET", "NZ")
-
-sp = get_spotify_client()
-user_id = safe_call(sp.current_user)["id"]
 
 
-def get_source_artists(playlist_id: str) -> set[str]:
-    artist_ids = set()
-    results = safe_call(sp.playlist_items, playlist_id)
-    while results:
-        for item in results.get("items", []):
-            track = item.get("track")
-            if track:
-                for artist in track.get("artists", []):
-                    artist_ids.add(artist["id"])
-        results = safe_call(sp.next, results) if results.get("next") else None
-    return artist_ids
-
-
-def get_artist_tracks(artist_id: str) -> list[str]:
-    track_uris = []
-    # Scoped strictly to this artist so other artists' matching titles are not dropped
-    seen_titles = set()
-
-    albums = safe_call(
-        sp.artist_albums,
-        artist_id,
-        album_type="album,single",
-        country=MARKET,
-        limit=50,
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Scrape artist discographies from a playlist into an ultimate queue."
     )
-
-    for album in albums.get("items", []):
-        if should_skip(album["name"]):
-            continue
-
-        results = safe_call(sp.album_tracks, album["id"])
-        while results:
-            for track in results.get("items", []):
-                if should_skip(track["name"], track.get("duration_ms")):
-                    continue
-
-                clean_title = normalize_title(track["name"])
-                if clean_title and clean_title not in seen_titles:
-                    seen_titles.add(clean_title)
-                    track_uris.append(track["uri"])
-
-            results = (
-                safe_call(sp.next, results) if results.get("next") else None
-            )
-
-    return track_uris
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the scrape and output stats without writing to Spotify.",
+    )
+    return parser.parse_args()
 
 
 def main():
-    print("Fetching artists...")
-    artist_ids = get_source_artists(SOURCE_PLAYLIST_ID)
-    print(f"Found {len(artist_ids)} artists.")
+    args = parse_args()
+    sp = get_spotify_client()
+    user_id = safe_call(sp.current_user)["id"]
+
+    if args.dry_run:
+        print("=== DRY RUN MODE: No playlists will be created ===\n")
+
+    print("Fetching artists from source playlist...")
+    artists = fetch_source_artists(sp, config.SOURCE_PLAYLIST_ID)
+    print(f"Found {len(artists)} unique artists.\n")
 
     all_tracks = []
+    total_filtered = 0
+    total_dupes = 0
 
-    for idx, a_id in enumerate(artist_ids, start=1):
-        artist = safe_call(sp.artist, a_id)
-        print(f"[{idx}/{len(artist_ids)}] Processing {artist['name']}...")
-
-        # Each artist runs through their own local de-duplication
-        tracks = get_artist_tracks(a_id)
+    for idx, artist in enumerate(artists, start=1):
+        tracks, filtered_cnt, dupe_cnt = scrape_artist_discography(
+            sp, artist["id"]
+        )
         all_tracks.extend(tracks)
+        total_filtered += filtered_cnt
+        total_dupes += dupe_cnt
 
-    print(f"\nCollected {len(all_tracks)} tracks. Building playlist...")
+        print(
+            f"[{idx}/{len(artists)}] {artist['name']}: "
+            f"{len(tracks)} kept | {filtered_cnt} filtered | {dupe_cnt} duplicates dropped"
+        )
 
-    new_playlist = safe_call(
-        sp.user_playlist_create,
-        user=user_id,
-        name="Full Discography Discovery",
-        public=False,
-        description="Auto-generated deep dive discography.",
+    # Scrape report
+    print("\n" + "=" * 45)
+    print("HARVEST SUMMARY")
+    print(f"Total tracks collected:   {len(all_tracks)}")
+    print(f"Total tracks filtered:    {total_filtered}")
+    print(f"Total duplicates dropped: {total_dupes}")
+    print("=" * 45)
+
+    if args.dry_run:
+        playlists_needed = (len(all_tracks) // config.MAX_PLAYLIST_SIZE) + 1
+        print(f"\n[Dry Run] Would generate {playlists_needed} playlist(s).")
+        print("[Dry Run] Finished cleanly.")
+        return
+
+    create_discovery_playlists(
+        sp,
+        user_id=user_id,
+        track_uris=all_tracks,
+        base_name="Full Discography Discovery",
     )
-
-    for i in range(0, len(all_tracks), 100):
-        safe_call(sp.playlist_add_items, new_playlist["id"], all_tracks[i : i + 100])
-
-    print(f"Done! Playlist ID: {new_playlist['id']}")
 
 
 if __name__ == "__main__":
