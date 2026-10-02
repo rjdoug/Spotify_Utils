@@ -1,6 +1,6 @@
 import argparse
-import config
 from pathlib import Path
+import config
 from services.harvester import (
     create_discovery_playlists,
     fetch_source_artists,
@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Print structural API diagnostics and dump raw payload to .debug_playlist.json.",
+        help="Print structural diagnostics and stream dropped tracks to duplicates_debug.log.",
     )
     parser.add_argument(
         "-n",
@@ -32,6 +32,7 @@ def parse_args():
     )
     return parser.parse_args()
 
+
 def main():
     args = parse_args()
     sp = get_spotify_client()
@@ -40,34 +41,42 @@ def main():
     if args.dry_run:
         print("=== DRY RUN MODE: No playlists will be created ===\n")
 
+    log_file = Path("duplicates_debug.log")
+    if args.debug and log_file.exists():
+        log_file.unlink()
+
     print("Fetching artists from source playlist...")
     artists = fetch_source_artists(
-    sp, config.SOURCE_PLAYLIST_ID, debug=args.debug
-)
+        sp, config.SOURCE_PLAYLIST_ID, debug=args.debug
+    )
     print(f"Found {len(artists)} unique artists.\n")
 
     all_tracks = []
     total_filtered = 0
     total_dupes = 0
 
-    # Clear old debug log if starting a new run with --debug
-    if args.debug:
-        Path("duplicates_debug.log").unlink(missing_ok=True)
-
     for idx, artist in enumerate(artists, start=1):
+        print(
+            f"[{idx}/{len(artists)}] {artist['name']}... ",
+            end="",
+            flush=True,
+        )
+
         tracks, filtered_cnt, dupe_cnt = scrape_artist_discography(
-            sp, artist["id"], artist_name=artist["name"], debug=args.debug
+            sp,
+            artist["id"],
+            artist_name=artist["name"],
+            debug=args.debug,
         )
         all_tracks.extend(tracks)
         total_filtered += filtered_cnt
         total_dupes += dupe_cnt
 
         print(
-            f"[{idx}/{len(artists)}] {artist['name']}: "
-            f"{len(tracks)} kept | {filtered_cnt} filtered | {dupe_cnt} duplicates dropped"
+            f"{len(tracks)} kept | {filtered_cnt} filtered | {dupe_cnt} duplicates dropped",
+            flush=True,
         )
 
-    # Scrape report
     print("\n" + "=" * 45)
     print("HARVEST SUMMARY")
     print(f"Total tracks collected:   {len(all_tracks)}")
