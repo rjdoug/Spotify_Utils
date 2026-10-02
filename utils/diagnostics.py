@@ -26,7 +26,7 @@ def inspect_playlist_payload(
     # 3. Check sample item structure if items exist
     if items:
         first = items[0]
-        track_obj = first.get("track")
+        track_obj = first.get("track") or first.get("item")
         print("\nSample Item[0]:")
         print(f"  Wrapper keys: {list(first.keys())}")
         print(f"  'track' is None: {track_obj is None}")

@@ -81,6 +81,12 @@ def safe_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
                 )
                 sys.exit(1)
 
+            # 400: Bad Request (query param/limit validation)
+            if exc.http_status == 400:
+                print("\n[Spotify Error 400: Bad Request]")
+                print(f"-> Details: {exc.msg if hasattr(exc, 'msg') else exc}")
+                sys.exit(1)
+
             # Any other unexpected Spotify exception
             print(f"\n[Spotify API Error {exc.http_status}] {exc}")
             sys.exit(1)

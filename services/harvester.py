@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import config
 from utils.client import safe_call
+from utils.diagnostics import inspect_playlist_payload
 from utils.filters import normalize_title, should_skip
 
 
@@ -10,12 +11,6 @@ class ScrapeStats:
     total_filtered: int = 0
     total_duplicates: int = 0
     artist_tracks: dict[str, list[str]] = field(default_factory=dict)
-
-
-import config
-from utils.client import safe_call
-from utils.diagnostics import inspect_playlist_payload
-from utils.filters import normalize_title, should_skip
 
 
 def fetch_source_artists(
@@ -30,15 +25,16 @@ def fetch_source_artists(
     artists = {}
     while results:
         for item in results.get("items", []):
-            track = item.get("track")
-            # Protect against None tracks (region locks, podcasts, or delisted songs)
+            track = item.get("item") or item.get("track")
             if track and track.get("artists"):
                 for artist in track.get("artists", []):
                     if artist.get("id"):
                         artists[artist["id"]] = artist["name"]
+
         results = safe_call(sp.next, results) if results.get("next") else None
 
     return [{"id": k, "name": v} for k, v in artists.items()]
+
 
 def scrape_artist_discography(
     sp, artist_id: str
@@ -52,39 +48,46 @@ def scrape_artist_discography(
     filtered_count = 0
     duplicate_count = 0
 
-    albums = safe_call(
+    # Spotify Development Mode strictly caps limit to 10
+    album_page = safe_call(
         sp.artist_albums,
         artist_id,
         album_type="album,single",
         country=config.MARKET,
-        limit=50,
+        limit=10,
     )
 
-    for album in albums.get("items", []):
-        if should_skip(album["name"]):
-            continue
+    while album_page:
+        for album in album_page.get("items", []):
+            if should_skip(album["name"]):
+                continue
 
-        results = safe_call(sp.album_tracks, album["id"])
-        while results:
-            for track in results.get("items", []):
-                name = track["name"]
-                duration = track.get("duration_ms")
+            # Must also pass limit=10 here (Spotipy defaults to 50)
+            results = safe_call(sp.album_tracks, album["id"], limit=10)
+            while results:
+                for track in results.get("items", []):
+                    name = track["name"]
+                    duration = track.get("duration_ms")
 
-                if should_skip(name, duration):
-                    filtered_count += 1
-                    continue
+                    if should_skip(name, duration):
+                        filtered_count += 1
+                        continue
 
-                clean_title = normalize_title(name)
-                if clean_title in seen_titles:
-                    duplicate_count += 1
-                    continue
+                    clean_title = normalize_title(name)
+                    if clean_title in seen_titles:
+                        duplicate_count += 1
+                        continue
 
-                seen_titles.add(clean_title)
-                track_uris.append(track["uri"])
+                    seen_titles.add(clean_title)
+                    track_uris.append(track["uri"])
 
-            results = (
-                safe_call(sp.next, results) if results.get("next") else None
-            )
+                results = (
+                    safe_call(sp.next, results) if results.get("next") else None
+                )
+
+        album_page = (
+            safe_call(sp.next, album_page) if album_page.get("next") else None
+        )
 
     return track_uris, filtered_count, duplicate_count
 
