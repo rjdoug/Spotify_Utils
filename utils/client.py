@@ -11,7 +11,7 @@ from urllib3.util import Retry
 
 def get_spotify_client() -> spotipy.Spotify:
     session = requests.Session()
-    # Retry transient 5xx server drops, but DO NOT let urllib3 sleep silently on 429
+    # Retry transient 5xx server drops, but do NOT let urllib3 sleep silently on 429
     retry_strategy = Retry(
         total=3,
         backoff_factor=1.0,
@@ -30,21 +30,21 @@ def get_spotify_client() -> spotipy.Spotify:
             scope="playlist-read-private playlist-modify-private playlist-modify-public"
         ),
         requests_session=session,
-        requests_timeout=10,  # Never block longer than 10s on dropped connections
+        requests_timeout=10,  # Never hang on dead sockets
         retries=0,           # Disable Spotipy's silent internal sleep on 429
         status_retries=0,
     )
 
 
 def safe_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Executes Spotify API calls with visible countdown timers and timeout recovery."""
+    """Executes Spotify API calls with 0.15s pacing, visible cooldown timers, and network recovery."""
     while True:
         try:
-            time.sleep(0.08)  # Gentle pacing to avoid tripping Dev Mode burst limits
+            time.sleep(0.15)  # Safe pacing to prevent tripping rate limits
             return func(*args, **kwargs)
 
         except SpotifyException as exc:
-            # 429: Rate limited - Show an active visible countdown
+            # 429: Rate limited - Display an active countdown on screen
             if exc.http_status == 429:
                 wait_sec = (
                     int(exc.headers.get("Retry-After", 5))

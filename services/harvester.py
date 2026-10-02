@@ -42,7 +42,7 @@ def fetch_source_artists(
 def scrape_artist_discography(
     sp, artist_id: str, artist_name: str = "", debug: bool = False
 ) -> tuple[list[str], int, int]:
-    """Pulls an artist's full tracks, isolating deduplication to this artist alone.
+    """Pulls an artist's full tracks using batched album lookups to minimize API calls.
 
     Returns: (track_uris, filtered_count, duplicate_count)
     """
@@ -51,6 +51,8 @@ def scrape_artist_discography(
     filtered_count = 0
     duplicate_count = 0
 
+    # 1. Collect all non-skipped release IDs for this artist (paged 10 at a time)
+    candidate_album_ids = []
     album_page = safe_call(
         sp.artist_albums,
         artist_id,
@@ -62,18 +64,37 @@ def scrape_artist_discography(
     while album_page:
         for album in album_page.get("items", []):
             album_name = album.get("name", "Unknown Album")
-
             skip_album, _ = should_skip(album_name)
             if skip_album:
                 continue
+            if album.get("id"):
+                candidate_album_ids.append(album["id"])
 
-            results = safe_call(sp.album_tracks, album["id"], limit=10)
-            while results:
-                for track in results.get("items", []):
+        album_page = (
+            safe_call(sp.next, album_page) if album_page.get("next") else None
+        )
+
+    # 2. Batch-fetch releases in chunks of 20 (Spotify's max for /v1/albums)
+    for i in range(0, len(candidate_album_ids), 20):
+        batch_ids = candidate_album_ids[i : i + 20]
+        albums_payload = safe_call(sp.albums, batch_ids, market=config.MARKET)
+
+        for album_obj in albums_payload.get("albums", []):
+            if not album_obj:
+                continue
+
+            album_name = album_obj.get("name", "Unknown Album")
+            tracks_page = album_obj.get("tracks", {})
+
+            while tracks_page:
+                for track in tracks_page.get("items", []):
+                    if not track:
+                        continue
+
                     name = track.get("name", "Unknown Track")
                     duration = track.get("duration_ms")
 
-                    # 1. Filter checks (hard filters + short interlude checks)
+                    # Check hard & short-interlude filters
                     skip_track, skip_reason = should_skip(name, duration)
                     if skip_track:
                         filtered_count += 1
@@ -88,7 +109,7 @@ def scrape_artist_discography(
                             )
                         continue
 
-                    # 2. Per-artist deduplication
+                    # Deduplication check
                     clean_title = normalize_title(name)
                     if clean_title in seen_titles:
                         duplicate_count += 1
@@ -106,13 +127,12 @@ def scrape_artist_discography(
                     seen_titles[clean_title] = f"{name} ({album_name})"
                     track_uris.append(track["uri"])
 
-                results = (
-                    safe_call(sp.next, results) if results.get("next") else None
+                # Handle releases with >50 tracks (rare box sets)
+                tracks_page = (
+                    safe_call(sp.next, tracks_page)
+                    if tracks_page.get("next")
+                    else None
                 )
-
-        album_page = (
-            safe_call(sp.next, album_page) if album_page.get("next") else None
-        )
 
     return track_uris, filtered_count, duplicate_count
 
