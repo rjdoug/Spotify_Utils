@@ -12,29 +12,33 @@ class ScrapeStats:
     artist_tracks: dict[str, list[str]] = field(default_factory=dict)
 
 
-def fetch_source_artists(sp, playlist_id: str) -> list[dict]:
-    """Extracts unique artists from the source playlist."""
-    # Query playlist metadata first
-    playlist_meta = safe_call(sp.playlist, playlist_id)
-    print(f"Target Playlist: '{playlist_meta.get('name')}'")
-    print(f"Owner:           {playlist_meta.get('owner', {}).get('display_name')}")
-    print(f"Total Tracks:    {playlist_meta.get('tracks', {}).get('total')}")
-    print(f"Is Public:       {playlist_meta.get('public')}")
-    print(f"Is Collaborative:{playlist_meta.get('collaborative')}\n")
+import config
+from utils.client import safe_call
+from utils.diagnostics import inspect_playlist_payload
+from utils.filters import normalize_title, should_skip
 
-    artists = {}
+
+def fetch_source_artists(
+    sp, playlist_id: str, debug: bool = False
+) -> list[dict]:
+    playlist_meta = safe_call(sp.playlist, playlist_id)
     results = safe_call(sp.playlist_items, playlist_id)
 
+    if debug:
+        inspect_playlist_payload(playlist_meta, results)
+
+    artists = {}
     while results:
         for item in results.get("items", []):
             track = item.get("track")
-            if track:
+            # Protect against None tracks (region locks, podcasts, or delisted songs)
+            if track and track.get("artists"):
                 for artist in track.get("artists", []):
-                    artists[artist["id"]] = artist["name"]
+                    if artist.get("id"):
+                        artists[artist["id"]] = artist["name"]
         results = safe_call(sp.next, results) if results.get("next") else None
 
     return [{"id": k, "name": v} for k, v in artists.items()]
-
 
 def scrape_artist_discography(
     sp, artist_id: str

@@ -15,10 +15,14 @@ def parse_args():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Simulate the scrape and output stats without writing to Spotify.",
+        help="Simulate the scrape without creating playlists.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print structural API diagnostics and dump raw payload to .debug_playlist.json.",
     )
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
@@ -29,7 +33,9 @@ def main():
         print("=== DRY RUN MODE: No playlists will be created ===\n")
 
     print("Fetching artists from source playlist...")
-    artists = fetch_source_artists(sp, config.SOURCE_PLAYLIST_ID)
+    artists = fetch_source_artists(
+    sp, config.SOURCE_PLAYLIST_ID, debug=args.debug
+)
     print(f"Found {len(artists)} unique artists.\n")
 
     all_tracks = []
