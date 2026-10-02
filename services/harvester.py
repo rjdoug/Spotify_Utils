@@ -47,12 +47,10 @@ def scrape_artist_discography(
     Returns: (track_uris, filtered_count, duplicate_count)
     """
     track_uris = []
-    # Maps clean_title -> original track name & album for detailed debug reporting
     seen_titles: dict[str, str] = {}
     filtered_count = 0
     duplicate_count = 0
 
-    # Spotify Development Mode caps album queries to limit=10
     album_page = safe_call(
         sp.artist_albums,
         artist_id,
@@ -65,7 +63,8 @@ def scrape_artist_discography(
         for album in album_page.get("items", []):
             album_name = album.get("name", "Unknown Album")
 
-            if should_skip(album_name):
+            skip_album, _ = should_skip(album_name)
+            if skip_album:
                 continue
 
             results = safe_call(sp.album_tracks, album["id"], limit=10)
@@ -74,8 +73,9 @@ def scrape_artist_discography(
                     name = track.get("name", "Unknown Track")
                     duration = track.get("duration_ms")
 
-                    # 1. Filter out live, acoustic, commentary, and skits
-                    if should_skip(name, duration):
+                    # 1. Filter checks (hard filters + short interlude checks)
+                    skip_track, skip_reason = should_skip(name, duration)
+                    if skip_track:
                         filtered_count += 1
                         if debug:
                             log_drop_event(
@@ -84,10 +84,11 @@ def scrape_artist_discography(
                                 drop_type="FILTERED",
                                 track_name=name,
                                 album_name=album_name,
+                                reason=skip_reason,
                             )
                         continue
 
-                    # 2. Check per-artist title deduplication
+                    # 2. Per-artist deduplication
                     clean_title = normalize_title(name)
                     if clean_title in seen_titles:
                         duplicate_count += 1
@@ -98,7 +99,7 @@ def scrape_artist_discography(
                                 drop_type="DUPLICATE",
                                 track_name=name,
                                 album_name=album_name,
-                                conflicted_with=seen_titles[clean_title],
+                                reason=seen_titles[clean_title],
                             )
                         continue
 
