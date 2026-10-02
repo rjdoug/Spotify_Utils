@@ -7,7 +7,7 @@ from services.harvester import (
     fetch_source_artists,
     scrape_artist_discography,
 )
-from utils.client import get_spotify_client, safe_call
+from utils.client import get_catalog_client, get_spotify_client, safe_call
 
 CHECKPOINT_FILE = Path("progress_checkpoint.json")
 
@@ -71,8 +71,9 @@ def save_checkpoint(
 
 def main():
     args = parse_args()
-    sp = get_spotify_client()
-    user_id = safe_call(sp.current_user)["id"]
+    sp_user = get_spotify_client()
+    sp_catalog = get_catalog_client()
+    user_id = safe_call(sp_user.current_user)["id"]
 
     if args.dry_run:
         print("=== DRY RUN MODE: No playlists will be created ===\n")
@@ -86,12 +87,12 @@ def main():
         log_file.unlink()
 
     print("Fetching artists from source playlist...")
+    # Reads source playlist using user-authenticated OAuth
     artists = fetch_source_artists(
-        sp, config.SOURCE_PLAYLIST_ID, debug=args.debug
+        sp_user, config.SOURCE_PLAYLIST_ID, debug=args.debug
     )
     print(f"Found {len(artists)} unique artists.\n")
 
-    # Load checkpoint data if available
     checkpoint = load_checkpoint()
     completed_ids = set(checkpoint.get("completed_ids", []))
     all_tracks = checkpoint.get("all_tracks", [])
@@ -114,8 +115,9 @@ def main():
             flush=True,
         )
 
+        # Scrapes catalog releases using app credentials (sp_catalog)
         tracks, filtered_cnt, dupe_cnt = scrape_artist_discography(
-            sp,
+            sp_catalog,
             artist["id"],
             artist_name=artist["name"],
             debug=args.debug,
@@ -130,7 +132,6 @@ def main():
             flush=True,
         )
 
-        # Save checkpoint after every completed artist
         save_checkpoint(
             list(completed_ids), all_tracks, total_filtered, total_dupes
         )
@@ -148,14 +149,14 @@ def main():
         print("[Dry Run] Finished cleanly. Checkpoint saved for live run.")
         return
 
+    # Builds and populates the private playlist using user-authenticated OAuth
     create_discovery_playlists(
-        sp,
+        sp_user,
         user_id=user_id,
         track_uris=all_tracks,
         base_name=args.name,
     )
 
-    # Clean up checkpoint only after successful playlist upload
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
         print("\n[Done] Checkpoint cleaned up.")

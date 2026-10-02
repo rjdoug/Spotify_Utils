@@ -5,13 +5,13 @@ import requests
 from requests.adapters import HTTPAdapter
 import spotipy
 from spotipy.exceptions import SpotifyException
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 from urllib3.util import Retry
+import config
 
 
-def get_spotify_client() -> spotipy.Spotify:
+def _create_session() -> requests.Session:
     session = requests.Session()
-    # Retry transient 5xx server drops, but do NOT let urllib3 sleep silently on 429
     retry_strategy = Retry(
         total=3,
         backoff_factor=1.0,
@@ -24,14 +24,41 @@ def get_spotify_client() -> spotipy.Spotify:
     )
     session.mount("https://", adapter)
     session.mount("http://", adapter)
+    return session
 
+
+def get_spotify_client() -> spotipy.Spotify:
+    """User-authenticated client (OAuth): used strictly for reading private source
+
+    playlists and writing private discovery playlists to your library.
+    """
     return spotipy.Spotify(
         auth_manager=SpotifyOAuth(
-            scope="playlist-read-private playlist-modify-private playlist-modify-public"
+            client_id=config.CLIENT_ID,
+            client_secret=config.CLIENT_SECRET,
+            redirect_uri="http://127.0.0.1:9090",
+            scope="playlist-read-private playlist-modify-private playlist-modify-public",
         ),
-        requests_session=session,
-        requests_timeout=10,  # Never hang on dead sockets
-        retries=0,           # Disable Spotipy's silent internal sleep on 429
+        requests_session=_create_session(),
+        requests_timeout=10,
+        retries=0,
+        status_retries=0,
+    )
+
+
+def get_catalog_client() -> spotipy.Spotify:
+    """App-authenticated client (Client Credentials): used strictly for scraping
+
+    public artist discographies, completely free from user-token rate-limit blocks.
+    """
+    return spotipy.Spotify(
+        auth_manager=SpotifyClientCredentials(
+            client_id=config.CLIENT_ID,
+            client_secret=config.CLIENT_SECRET,
+        ),
+        requests_session=_create_session(),
+        requests_timeout=10,
+        retries=0,
         status_retries=0,
     )
 
@@ -40,7 +67,7 @@ def safe_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Executes Spotify API calls with 0.15s pacing, visible cooldown timers, and network recovery."""
     while True:
         try:
-            time.sleep(0.15)  # Safe pacing to prevent tripping rate limits
+            time.sleep(0.15)
             return func(*args, **kwargs)
 
         except SpotifyException as exc:
