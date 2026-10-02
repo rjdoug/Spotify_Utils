@@ -1,7 +1,6 @@
 import os
-import spotipy
 from dotenv import load_dotenv
-from spotipy.oauth2 import SpotifyOAuth
+from utils.client import get_spotify_client, safe_call
 from utils.filters import normalize_title, should_skip
 
 load_dotenv()
@@ -9,40 +8,40 @@ load_dotenv()
 SOURCE_PLAYLIST_ID = os.getenv("SOURCE_PLAYLIST_ID")
 MARKET = os.getenv("SPOTIFY_MARKET", "NZ")
 
-sp = spotipy.Spotify(
-    auth_manager=SpotifyOAuth(
-        scope="playlist-read-private playlist-modify-private playlist-modify-public"
-    )
-)
-user_id = sp.current_user()["id"]
+sp = get_spotify_client()
+user_id = safe_call(sp.current_user)["id"]
 
 
 def get_source_artists(playlist_id: str) -> set[str]:
     artist_ids = set()
-    results = sp.playlist_items(playlist_id)
+    results = safe_call(sp.playlist_items, playlist_id)
     while results:
-        for item in results["items"]:
+        for item in results.get("items", []):
             track = item.get("track")
             if track:
                 for artist in track.get("artists", []):
                     artist_ids.add(artist["id"])
-        results = sp.next(results) if results["next"] else None
+        results = safe_call(sp.next, results) if results.get("next") else None
     return artist_ids
 
 
 def get_artist_tracks(artist_id: str, seen_titles: set[str]) -> list[str]:
     track_uris = []
-    albums = sp.artist_albums(
-        artist_id, album_type="album,single", country=MARKET, limit=50
+    albums = safe_call(
+        sp.artist_albums,
+        artist_id,
+        album_type="album,single",
+        country=MARKET,
+        limit=50,
     )
 
-    for album in albums["items"]:
+    for album in albums.get("items", []):
         if should_skip(album["name"]):
             continue
 
-        results = sp.album_tracks(album["id"])
+        results = safe_call(sp.album_tracks, album["id"])
         while results:
-            for track in results["items"]:
+            for track in results.get("items", []):
                 if should_skip(track["name"], track.get("duration_ms")):
                     continue
 
@@ -51,7 +50,9 @@ def get_artist_tracks(artist_id: str, seen_titles: set[str]) -> list[str]:
                     seen_titles.add(clean_title)
                     track_uris.append(track["uri"])
 
-            results = sp.next(results) if results["next"] else None
+            results = (
+                safe_call(sp.next, results) if results.get("next") else None
+            )
 
     return track_uris
 
