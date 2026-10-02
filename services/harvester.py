@@ -14,6 +14,14 @@ class ScrapeStats:
 
 def fetch_source_artists(sp, playlist_id: str) -> list[dict]:
     """Extracts unique artists from the source playlist."""
+    # Query playlist metadata first
+    playlist_meta = safe_call(sp.playlist, playlist_id)
+    print(f"Target Playlist: '{playlist_meta.get('name')}'")
+    print(f"Owner:           {playlist_meta.get('owner', {}).get('display_name')}")
+    print(f"Total Tracks:    {playlist_meta.get('tracks', {}).get('total')}")
+    print(f"Is Public:       {playlist_meta.get('public')}")
+    print(f"Is Collaborative:{playlist_meta.get('collaborative')}\n")
+
     artists = {}
     results = safe_call(sp.playlist_items, playlist_id)
 
