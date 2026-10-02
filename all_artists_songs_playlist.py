@@ -25,8 +25,11 @@ def get_source_artists(playlist_id: str) -> set[str]:
     return artist_ids
 
 
-def get_artist_tracks(artist_id: str, seen_titles: set[str]) -> list[str]:
+def get_artist_tracks(artist_id: str) -> list[str]:
     track_uris = []
+    # Scoped strictly to this artist so other artists' matching titles are not dropped
+    seen_titles = set()
+
     albums = safe_call(
         sp.artist_albums,
         artist_id,
@@ -63,17 +66,19 @@ def main():
     print(f"Found {len(artist_ids)} artists.")
 
     all_tracks = []
-    seen_titles = set()
 
     for idx, a_id in enumerate(artist_ids, start=1):
-        artist = sp.artist(a_id)
+        artist = safe_call(sp.artist, a_id)
         print(f"[{idx}/{len(artist_ids)}] Processing {artist['name']}...")
-        all_tracks.extend(get_artist_tracks(a_id, seen_titles))
+
+        # Each artist runs through their own local de-duplication
+        tracks = get_artist_tracks(a_id)
+        all_tracks.extend(tracks)
 
     print(f"\nCollected {len(all_tracks)} tracks. Building playlist...")
 
-    # Push to Spotify in chunks of 100
-    new_playlist = sp.user_playlist_create(
+    new_playlist = safe_call(
+        sp.user_playlist_create,
         user=user_id,
         name="Full Discography Discovery",
         public=False,
@@ -81,7 +86,7 @@ def main():
     )
 
     for i in range(0, len(all_tracks), 100):
-        sp.playlist_add_items(new_playlist["id"], all_tracks[i : i + 100])
+        safe_call(sp.playlist_add_items, new_playlist["id"], all_tracks[i : i + 100])
 
     print(f"Done! Playlist ID: {new_playlist['id']}")
 
